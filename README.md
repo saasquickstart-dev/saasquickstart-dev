@@ -48,6 +48,8 @@ SaaSQuickStart eliminates that. Fork it, point an AI agent at it, and start buil
 - Telemetry event system with Go SDK and REST API for custom event tracking
 - Public waitlist with admin management, CSV export, and anonymous traffic analytics (no external services)
 - Public pricing page (`/pricing`) with live plan data, annual discount callout, and no-auth access
+- 50+ free SEO tool pages at `/tools/*` (calculators, converters, generators) to drive organic search traffic — add new ones by registering a single entry in `registry.ts`
+- Fully mobile-responsive — all admin, customer, and auth pages adapt to mobile viewports with Sheet-based navigation drawers
 - Cookie consent banner (GDPR-ready, configurable message, `localStorage` persistence)
 - Google Analytics 4 integration (configurable Measurement ID via branding admin, no redeploy needed)
 - Legal page routing (`/terms`, `/privacy`) that resolves to external URLs or custom page slugs
@@ -114,6 +116,8 @@ If you're evaluating SaaS boilerplates, you've probably looked at ShipFast, Supa
 | **Job Queue** | Durable, no Redis | — | — | — | — | — |
 | **Object Storage** | R2/S3/DB fallback | — | — | — | — | — |
 | **MCP Server** | 33 tools | — | — | — | — | — |
+| **Free SEO Tools** | 50+ pages | — | — | — | — | — |
+| **Mobile Responsive** | Full | Partial | Partial | Partial | Partial | Partial |
 | **Admin Dashboard** | Full | — | ✓ | ✓ | ✓ | Basic |
 | **Stripe Billing** | Full | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -153,7 +157,7 @@ If you're evaluating SaaS boilerplates, you've probably looked at ShipFast, Supa
 Billing is abstracted behind a provider interface — switch between Stripe and LemonSqueezy with a single config key (`BILLING_PROVIDER=stripe|lemonsqueezy`). Stripe is the default; LemonSqueezy requires no external SDK (stdlib HTTP only).
 
 - **Subscription plans** with monthly and annual billing (configurable annual discount %)
-- **Pricing models**: flat-rate or per-seat (with included seats, min/max seat limits); per-seat plans enforce `maxSeats` at invite time and return `SEAT_LIMIT_REACHED` (403) when the cap is reached
+- **Pricing models**: flat-rate, per-seat (with included seats, min/max seat limits), or **one-time/lifetime** (pay once, permanent access via Stripe `mode=payment`); per-seat plans enforce `maxSeats` at invite time and return `SEAT_LIMIT_REACHED` (403); lifetime holders are blocked from switching to recurring plans (`LIFETIME_PLAN_LOCKED` 409)
 - **Free trials** with configurable trial days per plan and trial abuse prevention
 - **Credit bundles** for one-time purchases
 - **Dual credit buckets**: subscription credits (reset or accrue) + purchased credits
@@ -275,7 +279,8 @@ Billing is abstracted behind a provider interface — switch between Stripe and 
 - **Strict mode**: user-level members without a custom role are blocked from gated routes by default; owners and admins always pass through
 - Roles are tenant-scoped — no role leaks across tenants; `tenantId` is enforced in every query
 - Delete is blocked (409) when members are assigned; unassign first
-- `RequirePermission(perm)` middleware used on API key, webhook, audit log, and inbound webhook routers
+- `RequirePermission(perm)` middleware enforces RBAC on all gated tenant routes: api-keys, webhooks, inbound webhooks, jobs, documents, cron schedules, guest tokens, connected apps, and audit log — 8 subrouters in total
+- **PermissionGate** frontend component (`<PermissionGate permission="key">`) wraps page content and shows a clear "Access restricted" message when a member lacks the permission — distinct from the plan-tier `<EntitlementGate>` which shows an upgrade prompt; always wrap PermissionGate outside EntitlementGate so permission denial takes precedence
 - Auto-migration creates an "All Access" role per tenant and assigns it to all existing user-level members to preserve existing access on upgrade
 - Full REST API: `GET/POST /tenant/roles`, `PUT/DELETE /tenant/roles/{roleId}`, `PATCH /tenant/members/{userId}/custom-role`
 
@@ -285,7 +290,7 @@ Billing is abstracted behind a provider interface — switch between Stripe and 
 - Secret preview (first 8 chars + `...`) for identification without exposing the full secret
 - Secret regeneration — invalidates the old secret and returns a new one
 - Full REST API: create, list, get, update, delete, regenerate secret (`/api/tenant/oauth-apps/*`)
-- Admin-scoped (requires `admin` role or above within the tenant)
+- Permission-gated via `manage_connected_apps` — owners and admins always pass through; user-level members need the permission in their custom role
 
 ### Object Storage
 - Provider-agnostic `Store` interface — swap between Cloudflare R2, AWS S3, and MongoDB fallback with a single config change, no code changes
@@ -387,6 +392,15 @@ Billing is abstracted behind a provider interface — switch between Stripe and 
 - **Public waitlist** — visitors submit their email (+ optional name) from the landing page; stored with source tag and IP; admin can browse, delete, and export as CSV
 - **Anonymous page-view tracking** — `usePublicTracking()` fires a `page.view` telemetry event on every public page load (landing, docs) using a session ID stored in `sessionStorage`; no cookies, no external services
 - **Public traffic dashboard** — admin UI at `/admin/traffic` shows total views, daily bar chart, and top-pages table for any lookback window (7–90 days), powered by MongoDB aggregation on the existing telemetry collection
+
+### Free SEO Tool Pages
+
+50+ client-side tools at `/tools/*` designed to rank on Google and drive organic traffic to your product. Each tool is a standalone React page wrapped in a shared `<ToolLayout>` that injects `SoftwareApplication` JSON-LD structured data, canonical URLs, and meta descriptions automatically.
+
+- **Categories:** Developer (Base64, Diff Checker, Cron Builder, Curl Builder, UUID Generator, Color Contrast), Business (Churn Calculator, A/B Test Calculator, ARR/MRR calculators), AI/LLM tools, and more
+- **Adding a new tool:** add one entry to `frontend/src/pages/tools/registry.ts` — no route registration needed, no `App.tsx` edits; the route and the tools index card are generated automatically
+- **Internal linking:** every tool page links to `/pricing` and the signup page via `<ToolLayout>`, driving conversion from organic visitors
+- **SEO utilities:** `injectJsonLd()`, `setMetaDescription()`, `setCanonical()` from `@/utils/seo.ts` handle metadata lifecycle with React cleanup
 
 ### User Self-Service
 - Profile editing (display name, email)
@@ -599,7 +613,7 @@ In a new terminal, create the root tenant and admin account:
 
 ```bash
 cd backend
-go run ./cmd/saasquickstart setup
+go run ./cmd/cli setup
 ```
 
 The CLI prompts for your organization name, your name, email, and password. Open `http://localhost:4280` and log in with the credentials you just created.
@@ -629,7 +643,7 @@ Go to **Stripe Dashboard → Developers → API keys** and copy:
 **Option A — CLI (recommended):** Once your Stripe secret key and `frontend.url` are configured, run:
 
 ```bash
-cd backend && go run ./cmd/saasquickstart stripe register-webhook
+cd backend && go run ./cmd/cli stripe register-webhook
 ```
 
 This automatically creates the endpoint in your Stripe account with all 8 required events and prints the signing secret. Copy it to `STRIPE_WEBHOOK_SECRET` in your `.env`. Re-running the command is safe — it updates the existing endpoint rather than creating a duplicate.
@@ -694,10 +708,10 @@ When you're ready for production:
 **Stripe (switch to live mode):**
 
 1. Switch to **live mode** in the Stripe Dashboard
-2. Run `go run ./cmd/saasquickstart stripe register-webhook` against your production URL to create the live webhook endpoint and get its signing secret
+2. Run `go run ./cmd/cli stripe register-webhook` against your production URL to create the live webhook endpoint and get its signing secret
 3. Update your production environment variables with the live Stripe keys and webhook secret
 
-> **Note:** The seed command (`go run ./cmd/saasquickstart seed`) is for development and staging only — never run `--reset` against a production database.
+> **Note:** The seed command (`go run ./cmd/cli seed`) is for development and staging only — never run `--reset` against a production database.
 
 ---
 
@@ -716,7 +730,7 @@ To manually onboard a client: log out of your admin account, go to `/signup`, an
 | **Multi-tenant** (recommended) | One instance; all clients are isolated organizations with separate data, teams, and billing |
 | **Dedicated deployment** | Client requires absolute data isolation or a custom installation with no shared infrastructure |
 
-For a dedicated deployment: run a second instance with a different `DATABASE_NAME`, run `go run ./cmd/saasquickstart setup` to create its root admin, then customize via **Admin → Branding**.
+For a dedicated deployment: run a second instance with a different `DATABASE_NAME`, run `go run ./cmd/cli setup` to create its root admin, then customize via **Admin → Branding**.
 
 ### Stripe lazy provisioning
 
@@ -1007,7 +1021,7 @@ Add to your project's `.mcp.json`:
 
 ```bash
 cd backend
-go build -o saasquickstart ./cmd/saasquickstart
+go build -o saasquickstart ./cmd/cli
 ```
 
 ### Environment Variables
@@ -1360,7 +1374,7 @@ Here's what's already wired up for you:
 4. **Add frontend pages** in `frontend/src/pages/`
 5. **Use the tenant context** — every authenticated request carries the user's tenant, so your product logic gets multi-tenancy for free
 6. **Use the credit system** — check and deduct credits for usage-based features
-7. **Use entitlements** — gate features with `tenantMiddleware.RequireEntitlement("feature_name")` and `middleware.RequireActiveBilling()`
+7. **Use entitlements and RBAC** — gate backend routes with both `tenantMiddleware.RequireEntitlement("feature_name")` and `tenantMiddleware.RequirePermission(models.PermManageXxx)`; wrap frontend pages with `<PermissionGate permission="key"><EntitlementGate entitlement="key">` (permission is always the outer wrapper); add the feature to `featureRegistry.ts` so nav items and settings tabs are filtered automatically
 8. **Use the config store** — add runtime-configurable settings without redeployment
 9. **Use the event emitter** — emit events from your handlers and they'll automatically be delivered to configured webhooks
 10. **Use API keys** — your endpoints automatically support both JWT and API key authentication
@@ -1373,6 +1387,34 @@ Here's what's already wired up for you:
 17. **Use inbound webhooks** — create endpoints via `POST /api/tenant/inbound-webhook-endpoints`; receive events at `/api/inbound/webhooks/{token}` and process them in your handlers with HMAC-SHA256 signature verification already handled
 18. **Use guest tokens** — issue short-lived resource links via `POST /api/tenant/guest-tokens`; validate the token in your handler by checking scope, resource ID, and expiry
 19. **Use OAuth2 connected apps** — tenants register client credentials via `POST /api/tenant/oauth-apps`; validate `client_id` / `client_secret` pairs in your OAuth2 token endpoint by looking up the app and comparing the SHA-256 hash of the presented secret
+
+### AI Development Slash Commands
+
+The repository ships 17 Claude Code slash commands in `.claude/commands/`. They are invoked by typing `/command-name` in the Claude Code chat and load a structured, codebase-specific checklist as context for that task. Every command is grounded in real bugs, production incidents, and architecture rules from this codebase — not generic advice.
+
+**Invoke any command by typing its name in the Claude Code chat.**
+
+| Command | When to use |
+|---|---|
+| `/new-feature` | Starting any new feature — full 13-step checklist covering R1–R8 architecture rules, entitlement + permission gates, route mirroring in `testhelpers_test.go`, `featureRegistry.ts` for nav/settings, build gates |
+| `/frontend-component` | Building any React component — shadcn primitives, `data-testid` format, `aria-label`, `Label`+`htmlFor` pairing, hooks-before-returns, `getErrorMessage`, `toast` not `alert()`, `TableSkeleton`, `EmptyState`, `Dialog` not `ConfirmModal` |
+| `/frontend-page` | Adding a new page/route — correct layout per page type (admin/app/public/settings/tool), `lazyWithRetry` vs bare `lazy()`, `PermissionGate` + `EntitlementGate` wrapping, `featureRegistry.ts`, public dark-mode pattern, sitemap entry |
+| `/frontend-api` | Connecting frontend to backend APIs — `api/client.ts` only (never `fetch()`), `/api` baseURL (never prefix), React Query `useQuery`/`useMutation`, `useListFilters` for paginated lists, `getErrorMessage` in all catch blocks, `useNavigation()` ban |
+| `/e2e-test` | Writing Playwright tests — `loginAs` not UI login (rate limiter), `waitForResponse` before `page.goto` (the networkidle race), `getByTestId` not `getByRole('tab')` for `<Button>`, seed account billing states, `canceling` ≠ `canceled` |
+| `/code-review` | Reviewing a diff — `apierror.InternalWithError` grep, goroutine context detachment, tenant isolation queries, MongoDB index upgrade pattern, TypeScript `as any` bans, shadcn table enforcement, `lazyWithRetry` requirement |
+| `/security-review` | Security audit before release — tenant isolation filter audit, middleware chain verification, input validation, error leakage, webhook HMAC, rate limit coverage, secrets in config |
+| `/migration` | Writing a DB migration — VERSION bump (silent failure mode), idempotency requirement, `DropOne` before unique index upgrades (the `verification_tokens` deploy incident), expand-contract pattern |
+| `/qa` | Verifying a feature before marking done — all user roles × all billing states, empty states, pagination rollback, concurrent actions, E2E timing patterns, pre-deploy checklist |
+| `/billing` | Any billing change — 3-file Stripe event sync (`provider.go` + `stripe/service.go` + `webhook.go`), entitlements in ALL 4 plans, billing status state machine, `ErrNotSupported` graceful degradation |
+| `/job-handler` | Adding a background job — idempotency contract (`job.Result` for external IDs), register before `jobQueue.Start()`, use `ctx` not `context.Background()`, `NilObjectID` for system-level cron schedules |
+| `/webhook` | Adding an outgoing webhook event — 3-file pattern: `EventType` in `emitter.go`, `WebhookEventType` + `AllWebhookEventTypes` + `ValidWebhookEventType` in `models/webhook.go`, case in `dispatcher.go` |
+| `/seed` | Adding test seed accounts — `SeedTag` on every inserted doc, manifest struct types, TypeScript getters in `fixtures/seed.ts`, what can't be seeded (real Stripe subs, OAuth accounts) |
+| `/deploy` | Before every production deployment — Stripe `sk_live_` vs `sk_test_` check, VERSION file guard, Docker build verification, Render PORT conflict note, Fly.io `-c fly.saas.toml` requirement, rollback procedures |
+| `/debug` | Something is broken in production — `/admin/error-logs` first, `/admin/health`, `go run ./cmd/cli doctor`, Sentry stack traces, MongoDB Atlas monitoring, Stripe webhook delivery log |
+| `/hotfix` | Emergency production fix — which corners are safe to cut (skip E2E suite), which are never safe (`go build`, `tsc --noEmit`), commit message template with root-cause and follow-up fields |
+| `/onboarding` | New developer or new machine setup — ordered sequence: `setup.ps1` → MongoDB replica set (not standalone) → `npm install` → `dev:all` → `cli setup` → `seed`, common error messages with fixes |
+
+Commands are committed to `.claude/commands/` and available to everyone on the team without any setup beyond having Claude Code installed.
 
 ---
 
